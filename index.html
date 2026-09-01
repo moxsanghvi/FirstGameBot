@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>FirstGameBot - Subway Runner</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;font-family:Arial,sans-serif;touch-action:none}
+canvas{display:block;width:100%;height:100%;background:#222}
+#ui{position:fixed;inset:0;pointer-events:none;color:#fff}
+#score{position:absolute;top:14px;left:14px;font-size:22px;font-weight:700;text-shadow:0 2px 3px #000}
+#help{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:14px;text-shadow:0 2px 3px #000}
+.panel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0009;pointer-events:auto}
+.card{width:min(90%,360px);padding:26px;border-radius:20px;background:#fff;color:#111;text-align:center;box-shadow:0 12px 40px #0008}
+.card h1{margin:0 0 10px;font-size:28px}.card p{margin:8px 0 20px;color:#555}
+button{border:0;border-radius:14px;padding:14px 24px;font-size:18px;font-weight:700;background:#222;color:#fff}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div id="score">Score: 0</div>
+  <div id="help">Swipe ← → to change lane • Swipe ↑ to jump</div>
+  <div id="start" class="panel">
+    <div class="card">
+      <h1>🏃 Subway Runner</h1>
+      <p>Run, dodge obstacles and collect coins!</p>
+      <button id="startBtn">PLAY GAME</button>
+    </div>
+  </div>
+  <div id="over" class="panel hidden">
+    <div class="card">
+      <h1>Game Over</h1>
+      <p id="final">Score: 0</p>
+      <button id="restartBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+</div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W,H,dpr,lanes=[-1,0,1],lane=0,targetLane=0,playerY=0,vy=0;
+let objects=[],score=0,speed=0.42,running=false,last=0,spawnT=0;
+const scoreEl=document.getElementById('score'),start=document.getElementById('start'),over=document.getElementById('over'),final=document.getElementById('final');
+
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+
+function roadY(t){return H*.23 + t*H*.77}
+function roadX(x,t){return W/2 + x*(W*.13 + t*W*.31)}
+function reset(){
+  objects=[];score=0;speed=.42;lane=0;targetLane=0;playerY=0;vy=0;spawnT=0;
+  running=true;start.classList.add('hidden');over.classList.add('hidden');last=performance.now();requestAnimationFrame(loop);
+}
+function spawn(){
+  const x=lanes[Math.floor(Math.random()*3)];
+  const kind=Math.random()<.72?'obstacle':'coin';
+  objects.push({x,t:0,kind});
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#78c9ff');g.addColorStop(.5,'#dff5ff');g.addColorStop(.51,'#777');g.addColorStop(1,'#333');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // road
+  ctx.fillStyle='#555';ctx.beginPath();ctx.moveTo(W*.34,H*.23);ctx.lineTo(W*.66,H*.23);ctx.lineTo(W*.98,H);ctx.lineTo(W*.02,H);ctx.closePath();ctx.fill();
+  // lane lines
+  for(let x of [-.5,.5]){
+    ctx.strokeStyle='#eee';ctx.lineWidth=3;ctx.setLineDash([18,22]);ctx.beginPath();ctx.moveTo(roadX(x,0),H*.23);ctx.lineTo(roadX(x,1),H);ctx.stroke();ctx.setLineDash([]);
+  }
+  // distant buildings
+  ctx.fillStyle='#9aa';for(let i=0;i<10;i++){let x=i*W/10;let h=30+(i%4)*18;ctx.fillRect(x,H*.23-h,W/11,h)}
+  // objects
+  for(const o of objects){
+    let y=roadY(o.t),x=roadX(o.x,o.t),s=14+o.t*46;
+    if(o.kind==='coin'){
+      ctx.fillStyle='#ffd21c';ctx.beginPath();ctx.arc(x,y-s,s*.42,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#b77a00';ctx.lineWidth=3;ctx.stroke();
+      ctx.fillStyle='#7a5200';ctx.font=`bold ${Math.max(10,s*.5)}px Arial`;ctx.textAlign='center';ctx.fillText('$',x,y-s+s*.18);
+    }else{
+      ctx.fillStyle='#e33';ctx.fillRect(x-s,y-s,s*2,s*1.55);
+      ctx.fillStyle='#222';ctx.fillRect(x-s*.7,y-s*.55,s*.45,s*.35);ctx.fillRect(x+s*.25,y-s*.55,s*.45,s*.35);
+    }
+  }
+  // player
+  let px=roadX(lane,1),py=H*.84-playerY;
+  ctx.fillStyle='#1f6feb';ctx.fillRect(px-24,py-62,48,62);
+  ctx.fillStyle='#ffd2a6';ctx.beginPath();ctx.arc(px,py-76,17,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#111';ctx.fillRect(px-17,py-93,34,9);
+  ctx.fillStyle='#fff';ctx.fillRect(px-19,py-30,16,7);ctx.fillRect(px+3,py-30,16,7);
+  scoreEl.textContent='Score: '+Math.floor(score);
+}
+function loop(now){
+  if(!running)return;
+  const dt=Math.min(32,now-last);last=now;
+  spawnT+=dt;
+  if(spawnT>Math.max(360,850-speed*400)){spawn();spawnT=0}
+  speed+=dt*.0000025;
+  for(const o of objects)o.t+=dt/1000*speed;
+  objects=objects.filter(o=>o.t<1.08);
+  lane += (targetLane-lane)*Math.min(1,dt/90);
+  if(playerY>0||vy!==0){playerY+=vy*dt/16;vy-=1.15*dt/16;if(playerY<=0){playerY=0;vy=0}}
+  for(const o of objects){
+    if(o.t>.86 && o.t<1.04 && Math.abs(o.x-lane)<.34){
+      if(o.kind==='coin'){score+=50;o.t=2}
+      else if(playerY<45){endGame();return}
+    }
+  }
+  score+=dt*.03;draw();requestAnimationFrame(loop);
+}
+function endGame(){running=false;final.textContent='Score: '+Math.floor(score);over.classList.remove('hidden')}
+function move(dir){if(!running)return;targetLane=Math.max(-1,Math.min(1,targetLane+dir))}
+let sx=0,sy=0;
+c.addEventListener('touchstart',e=>{const t=e.changedTouches[0];sx=t.clientX;sy=t.clientY},{passive:true});
+c.addEventListener('touchend',e=>{const t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;if(Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>25)move(dx>0?1:-1);else if(dy<-25&&playerY===0){vy=17}},{passive:true});
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft')move(-1);if(e.key==='ArrowRight')move(1);if(e.key==='ArrowUp'&&playerY===0)vy=17;if(e.key===' '&&!running)reset()});
+document.getElementById('startBtn').onclick=reset;document.getElementById('restartBtn').onclick=reset;
+draw();
+</script>
+</body>
+</html>
